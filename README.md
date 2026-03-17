@@ -1,10 +1,10 @@
 # Movielist App
 ## Features
-Add Movies
-Search added Movies from list
-Delete Movies
+_ Add Movies
+_ Search added Movies from list
+_ Delete Movies
 
 ## Tech
-HTML
-CSS
-JavaScript
+_ HTML
+_ CSS
+_ JavaScript
