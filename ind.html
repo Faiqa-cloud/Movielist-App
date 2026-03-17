@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Favorite Movies — Arrays + DOM</title>
+<style>
+  /* --- Base reset + predictable sizing --- */
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    min-height: 100vh;
+    display: flex;              /* center page content */
+    justify-content: center;
+    align-items: center;
+    background: #f6f7fb;
+    font-family: system-ui, -apple-system, Arial, sans-serif;
+  }
+
+  /* --- Card layout --- */
+  .app {
+    width: min(680px, 92vw);
+    border: 2px solid #111;
+    background: #fff;
+    border-radius: 16px;
+    padding: 18px;
+    display: flex;
+    flex-direction: column;     /* stack vertically */
+    gap: 14px;
+    box-shadow: 0 12px 30px rgba(0,0,0,0.08);
+  }
+
+  .row {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+
+  input[type="text"] {
+    flex: 1 1 280px;
+    padding: 10px 12px;
+    border: 1.5px solid #222;
+    border-radius: 10px;
+    font-size: 16px;
+    outline: none;
+  }
+  input[type="text"]:focus { border-color: #4e8cff; }
+
+  button {
+    padding: 10px 14px;
+    border: 1.5px solid #222;
+    background: #f0f4ff;
+    border-radius: 10px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: transform 120ms ease;
+  }
+  button:hover { transform: translateY(-1px); }
+
+  .stats {
+    display: flex;
+    gap: 16px;
+    font-size: 14px;
+    color: #333;
+  }
+
+  /* List area stays scrollable, page stays fixed (no page scroll) */
+  .list {
+    border: 1.5px solid #222;
+    border-radius: 12px;
+    padding: 10px;
+    max-height: 42vh;       /* keeps page tidy; internal scroll only */
+    overflow: auto;
+    background: #fafbff;
+  }
+  .empty {
+    color: #777;
+    font-style: italic;
+    padding: 6px;
+  }
+
+  ul { list-style: none; padding: 0; margin: 0; }
+  li {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    align-items: center;
+    padding: 8px 10px;
+    border-bottom: 1px dashed #ccc;
+  }
+  li:last-child { border-bottom: none; }
+  .title { font-size: 16px; }
+  .pill {
+    font-size: 12px;
+    padding: 4px 8px;
+    border: 1px solid #222;
+    border-radius: 999px;
+    margin-left: 8px;
+    background: #fff;
+  }
+  .actions {
+    display: flex; gap: 8px;
+  }
+  .danger {
+    background: #ffe9e9;
+  }
+
+  .msg {
+    min-height: 18px;
+    font-size: 14px;
+    color: #0b5;
+  }
+  .msg.error { color: #d43; }
+
+  /* Tiny animation for add/remove feedback */
+  .fade-in { animation: fade 200ms ease; }
+  @keyframes fade { from { opacity: .2; transform: scale(.98); } to { opacity: 1 } }
+</style>
+</head>
+<body>
+  <main class="app" id="app">
+    <h2>Favorite Movies</h2>
+
+    <!-- Add row -->msgEl
+    <div class="row">
+      <input id="addInput" type="text" placeholder="Add a movie title… e.g., Avengers, Lion King, Spider-Man"/>
+      <button id="addBtn">Add</button>
+      <button id="clearBtn" class="danger">Clear All</button>
+    </div>
+
+    <!-- Search row -->
+    <div class="row">
+      <input id="searchInput" type="text" placeholder="Search (non-mutative filter)…"/>
+      <button id="resetSearchBtn">Reset Search</button>
+    </div>
+
+    <!-- Stats + messages -->
+    <div class="stats">
+      <div>Total: <span id="totalCount">0</span></div>
+      <div>Showing: <span id="showingCount">0</span></div>
+    </div>
+    <div class="msg" id="msg"></div>
+
+    <!-- List -->
+    <div class="list" id="list">
+      <div class="empty">Start by adding your first movie.</div>
+    </div>
+  </main>
+
+<script>
+/* ===========================================================
+   0) STATE (Data): our source of truth
+   =========================================================== */
+
+let movies = []; // array of objects: { id: string, title: string }
+
+/* ===========================================================
+   1) DOM Cache: one-time lookups (faster, cleaner)
+   =========================================================== */
+const addInput        = document.getElementById('addInput');
+const addBtn          = document.getElementById('addBtn');
+const clearBtn        = document.getElementById('clearBtn');
+const searchInput     = document.getElementById('searchInput');
+const resetSearchBtn  = document.getElementById('resetSearchBtn');
+const listEl          = document.getElementById('list');
+const totalCountEl    = document.getElementById('totalCount');
+const showingCountEl  = document.getElementById('showingCount');
+const msgEl           = document.getElementById('msg');
+
+/* ===========================================================
+   2) Helpers (non-DOM utilities)
+   =========================================================== */
+
+// Create a simple unique id (timestamp + counter)
+let _counter = 0;
+function createId() {
+  _counter += 1;
+  return `${Date.now().toString(36)}-${_counter}`;
+}
+
+// Normalize strings for case-insensitive compare
+const norm = (s) => s.trim().toLowerCase();
+
+// Small “toast” feedback line
+function flash(message, isError = false) {
+  msgEl.textContent = message;
+  msgEl.classList.toggle('error', isError);
+  if (message) {
+    msgEl.classList.add('fade-in');
+    setTimeout(() => msgEl.classList.remove('fade-in'), 220);
+  }
+}
+
+/* ===========================================================
+   3) NON-MUTATIVE FUNCTIONS (pure readers/transformers)
+      - They DO NOT change the source array.
+   =========================================================== */
+
+// Returns a NEW array of movies that match the term (case-insensitive)
+const getFilteredMovies = (term) =>
+  term ? movies.filter(m => norm(m.title).includes(norm(term))) : [...movies];
+
+// Builds HTML for a given list WITHOUT modifying the data
+const toListHTML = (list) =>
+  list.length === 0
+    ? '<div class="empty">No movies to show.</div>'
+    : `<ul>
+        ${list.map(({ id, title }) => `
+          <li data-id="${id}" class="fade-in">
+            <div class="title">
+              ${title}
+              <span class="pill">id:${id.slice(-4)}</span>
+            </div>
+            <div class="actions">
+              <button class="deleteBtn">Delete</button>
+            </div>
+          </li>
+        `).join('')}
+      </ul>`;
+
+// Central render: decides what to show based on search
+function render() {
+  const term = searchInput.value;
+  const shown = getFilteredMovies(term);    // non-mutative
+  listEl.innerHTML = toListHTML(shown);     // non-mutative string build
+  totalCountEl.textContent = movies.length;
+  showingCountEl.textContent = shown.length;
+}
+
+/* ===========================================================
+   4) MUTATIVE ACTIONS (modify the source array intentionally)
+   =========================================================== */
+
+// Add a movie (validates, then PUSH)
+function addMovie(title) {
+  const clean = title.trim();
+  if (!clean) {
+    flash('Please enter a title.', true);
+    return;
+  }
+
+  // Optional: prevent duplicates (case-insensitive)
+  if (movies.some(m => norm(m.title) === norm(clean))) {
+    flash('That title already exists.', true);
+    return;
+  }
+
+  movies.push({ id: createId(), title: clean }); // MUTATION: push
+  flash('Added!');
+  render();
+}
+
+// Remove a movie by id (findIndex + SPLICE)
+function removeMovieById(id) {
+  const idx = movies.findIndex(m => m.id === id);
+  if (idx === -1) return; // nothing to do
+  movies.splice(idx, 1);   // MUTATION: splice
+  flash('Removed.');
+  render();
+}
+
+// Clear all (hard reset)
+function clearAll() {
+  if (!movies.length) { flash('List is already empty.'); return; }
+  movies = []; // MUTATION: reassign whole array
+  flash('Cleared all.');
+  render();
+}
+
+/* ===========================================================
+   5) EVENTS (wire UI -> actions + render)
+   =========================================================== */
+
+// Add button
+addBtn.addEventListener('click', () => {
+  addMovie(addInput.value);
+  addInput.value = '';
+  addInput.focus();
+});
+
+// Enter to add
+addInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    addMovie(addInput.value);
+    addInput.value = '';
+  }
+});
+
+// Search (non-mutative filtering as you type)
+searchInput.addEventListener('input', () => {
+  render(); // render uses getFilteredMovies(searchInput.value)
+});
+
+// Reset search
+resetSearchBtn.addEventListener('click', () => {
+  searchInput.value = '';
+  render();
+});
+
+// Clear all
+clearBtn.addEventListener('click', clearAll);
+
+// Event delegation for delete buttons (works for dynamic items)
+listEl.addEventListener('click', (e) => {
+  const btn = e.target.closest('.deleteBtn');
+  if (!btn) return;
+  const li = btn.closest('li[data-id]');
+  if (!li) return;
+  const id = li.dataset.id;
+  removeMovieById(id);
+});
+
+// Initial paint
+render();
+</script>
+</body>
+</html>
